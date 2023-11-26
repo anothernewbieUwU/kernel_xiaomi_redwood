@@ -1041,6 +1041,58 @@ static void handle_message(struct battery_chg_dev *bcdev, void *data,
 		complete(&bcdev->ack);
 }
 
+static void battery_chg_update_uusb_type(struct battery_chg_dev *bcdev,
+					 u32 adap_type)
+{
+	struct psy_state *pst = &bcdev->psy_list[PSY_TYPE_USB];
+	int rc;
+
+	/* Handle the extcon notification for uUSB case only */
+	if (bcdev->connector_type != USB_CONNECTOR_TYPE_MICRO_USB)
+		return;
+
+	rc = read_property_id(bcdev, pst, USB_SCOPE);
+	if (rc < 0) {
+		pr_err("Failed to read USB_SCOPE rc=%d\n", rc);
+		return;
+	}
+
+	switch (pst->prop[USB_SCOPE]) {
+	case POWER_SUPPLY_SCOPE_DEVICE:
+		if (adap_type == POWER_SUPPLY_USB_TYPE_SDP ||
+		    adap_type == POWER_SUPPLY_USB_TYPE_CDP) {
+			/* Device mode connect notification */
+			extcon_set_state_sync(bcdev->extcon, EXTCON_USB, 1);
+			bcdev->usb_prev_mode = EXTCON_USB;
+			rc = qti_typec_partner_register(bcdev->typec_class,
+							TYPEC_DEVICE);
+			if (rc < 0)
+				pr_err("Failed to register typec partner rc=%d\n",
+					rc);
+		}
+		break;
+	case POWER_SUPPLY_SCOPE_SYSTEM:
+		/* Host mode connect notification */
+		extcon_set_state_sync(bcdev->extcon, EXTCON_USB_HOST, 1);
+		bcdev->usb_prev_mode = EXTCON_USB_HOST;
+		rc = qti_typec_partner_register(bcdev->typec_class, TYPEC_HOST);
+		if (rc < 0)
+			pr_err("Failed to register typec partner rc=%d\n",
+				rc);
+		break;
+	default:
+		if (bcdev->usb_prev_mode == EXTCON_USB ||
+		    bcdev->usb_prev_mode == EXTCON_USB_HOST) {
+			/* Disconnect notification */
+			extcon_set_state_sync(bcdev->extcon,
+					      bcdev->usb_prev_mode, 0);
+			bcdev->usb_prev_mode = EXTCON_NONE;
+			qti_typec_partner_unregister(bcdev->typec_class);
+		}
+		break;
+	}
+}
+
 static struct power_supply_desc usb_psy_desc;
 
 static void battery_chg_update_usb_type_work(struct work_struct *work)
@@ -1356,13 +1408,14 @@ static ssize_t quick_charge_type_show(struct class *c,
 		read_property_id(bcdev, pst, XM_PROP_APDO_MAX);
 		power_max = pst->prop[XM_PROP_APDO_MAX];
 
-		if (real_charger_type == POWER_SUPPLY_USB_TYPE_PD_PPS && verify_digiest == 1) {
-			if (power_max >= 50)
-				result = QUICK_CHARGE_SUPER;
-			else
-				result = QUICK_CHARGE_TURBE;
-		} else if (real_charger_type == POWER_SUPPLY_USB_TYPE_PD_PPS) {
+		if (real_charger_type == POWER_SUPPLY_USB_TYPE_PD_PPS) {
 			result = QUICK_CHARGE_FAST;
+			if (verify_digiest == 1) {
+				if (power_max >= 50)
+					result = QUICK_CHARGE_SUPER;
+				else
+					result = QUICK_CHARGE_TURBE;
+			}
 		} else {
 			while (adapter_cap[i].adap_type != 0) {
 				if (real_charger_type == adapter_cap[i].adap_type)
@@ -1464,6 +1517,7 @@ static enum power_supply_property usb_props[] = {
 	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
 	POWER_SUPPLY_PROP_USB_TYPE,
 	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_SCOPE,
 };
 
 static enum power_supply_usb_type usb_psy_supported_types[] = {
@@ -1738,19 +1792,15 @@ static int power_supply_read_temp(struct thermal_zone_device *tzd,
 
 	time_now = ktime_get();
 	delta = ktime_ms_delta(time_now, last_read_time);
-
-	if (delta < 10000)
-		batt_temp = last_temp;
-	else {
+	if (delta > 10000) {
 		rc = read_property_id(bcdev, pst, XM_PROP_THERMAL_TEMP);
 		batt_temp = pst->prop[XM_PROP_THERMAL_TEMP];
 		last_temp = batt_temp;
 		last_read_time = time_now;
 	}
 
+	batt_temp = last_temp;
 	*temp = batt_temp * 1000;
-	if (batt_temp != last_temp)
-		last_temp = batt_temp;
 
 	return 0;
 }
@@ -4551,6 +4601,9 @@ static int battery_chg_parse_dt(struct battery_chg_dev *bcdev)
 	int rc, len;
 #endif
 
+	bcdev->wls_not_supported = of_property_read_bool(node,
+			"qcom,wireless-charging-not-supported");
+
 	of_property_read_string(node, "qcom,wireless-fw-name",
 				&bcdev->wls_fw_name);
 
@@ -4786,6 +4839,47 @@ static int battery_chg_register_panel_notifier(struct battery_chg_dev *bcdev)
 	pr_debug("register panel notifier successful\n");
 	bcdev->notifier_cookie = cookie;
 	return 0;
+}
+
+static int register_extcon_conn_type(struct battery_chg_dev *bcdev)
+{
+	struct psy_state *pst = &bcdev->psy_list[PSY_TYPE_USB];
+	int rc;
+
+	rc = read_property_id(bcdev, pst, USB_CONNECTOR_TYPE);
+	if (rc < 0) {
+		pr_err("Failed to read prop USB_CONNECTOR_TYPE, rc=%d\n",
+			rc);
+		return rc;
+	}
+
+	bcdev->connector_type = pst->prop[USB_CONNECTOR_TYPE];
+	bcdev->usb_prev_mode = EXTCON_NONE;
+
+	bcdev->extcon = devm_extcon_dev_allocate(bcdev->dev,
+						bcdev_usb_extcon_cable);
+	if (IS_ERR(bcdev->extcon)) {
+		rc = PTR_ERR(bcdev->extcon);
+		pr_err("Failed to allocate extcon device rc=%d\n", rc);
+		return rc;
+	}
+
+	rc = devm_extcon_dev_register(bcdev->dev, bcdev->extcon);
+	if (rc < 0) {
+		pr_err("Failed to register extcon device rc=%d\n", rc);
+		return rc;
+	}
+	rc = extcon_set_property_capability(bcdev->extcon, EXTCON_USB,
+					    EXTCON_PROP_USB_SS);
+	rc |= extcon_set_property_capability(bcdev->extcon,
+					     EXTCON_USB_HOST, EXTCON_PROP_USB_SS);
+	if (rc < 0)
+		pr_err("failed to configure extcon capabilities rc=%d\n", rc);
+	else
+		pr_debug("Registered extcon, connector_type %s\n",
+			 bcdev->connector_type ? "uusb" : "Typec");
+
+	return rc;
 }
 
 #ifdef CONFIG_MACH_XIAOMI
