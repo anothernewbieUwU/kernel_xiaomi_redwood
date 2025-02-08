@@ -466,13 +466,6 @@ __primary_switched:
 	b	start_kernel
 ENDPROC(__primary_switched)
 
-	.pushsection ".rodata", "a"
-SYM_DATA_START(kimage_vaddr)
-	.quad		_text - TEXT_OFFSET
-SYM_DATA_END(kimage_vaddr)
-EXPORT_SYMBOL(kimage_vaddr)
-	.popsection
-
 /*
  * end early head section, begin head code that is also used for
  * hotplug and needs to have the same protections as the text region
@@ -682,17 +675,15 @@ ENDPROC(set_cpu_boot_mode_flag)
  * This is not in .bss, because we set it sufficiently early that the boot-time
  * zeroing of .bss would clobber it.
  */
-SYM_DATA_START(__boot_cpu_mode)
+ENTRY(__boot_cpu_mode)
 	.long	BOOT_CPU_MODE_EL2
 	.long	BOOT_CPU_MODE_EL1
-SYM_DATA_END(__boot_cpu_mode)
 /*
  * The booting CPU updates the failed status @__early_cpu_boot_status,
  * with MMU turned off.
  */
-SYM_DATA_START(__early_cpu_boot_status)
+ENTRY(__early_cpu_boot_status)
 	.quad 	0
-SYM_DATA_END(__early_cpu_boot_status)
 
 	.popsection
 
