@@ -68,7 +68,8 @@
 #include <linux/bpf.h>
 #include <linux/mount.h>
 #include <linux/userfaultfd_k.h>
-
+#include <linux/kernel.h>
+#include <linux/module.h>
 #include "../lib/kstrtox.h"
 
 #include <linux/uaccess.h>
@@ -148,7 +149,6 @@ static int __maybe_unused max_kswapd_threads = MAX_KSWAPD_THREADS;
 
 #ifdef CONFIG_SCHED_WALT
 static int neg_three = -3;
-static int three = 3;
 static int fifty = 50;
 static int two_hundred_fifty_five = 255;
 const int sched_user_hint_max = 1000;
@@ -184,9 +184,9 @@ extern uint sched_burst_fork_atavistic;
 extern uint sched_burst_penalty_offset;
 extern uint sched_burst_penalty_scale;
 extern uint sched_burst_cache_lifetime;
-static int __maybe_unused three          = 3;
-static int __maybe_unused sixty_four     = 64;
-static int __maybe_unused maxval_12_bits = 4095;
+static int three          = 3;
+static int sixty_four     = 64;
+static int maxval_12_bits = 4095;
 #endif // CONFIG_SCHED_BORE
 
 /*
@@ -1616,7 +1616,7 @@ static struct ctl_table kern_table[] = {
 		.procname	= "sched_burst_smoothness_long",
 		.data		= &sched_burst_smoothness_long,
 		.maxlen		= sizeof(int),
-		.mode		= 0644,		
+		.mode		= 0644,
 		.proc_handler = proc_douintvec_minmax,
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_ONE,
@@ -1644,7 +1644,7 @@ static struct ctl_table kern_table[] = {
 		.data		= &sched_burst_penalty_offset,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler = proc_douintvec_minmax,+		
+		.proc_handler = proc_douintvec_minmax,
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= &sixty_four,
 	},

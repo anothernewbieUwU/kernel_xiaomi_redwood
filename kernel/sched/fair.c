@@ -52,7 +52,7 @@ unsigned int sysctl_sched_latency			= 24000000ULL;
 static unsigned int normalized_sysctl_sched_latency	= 24000000ULL;
 #else // CONFIG_SCHED_BORE
 unsigned int sysctl_sched_latency			= 6000000ULL;
-static unsigned int normalized_sysctl_sched_latency	= 6000000ULL;
+unsigned int normalized_sysctl_sched_latency	= 6000000ULL;
 #endif // CONFIG_SCHED_BORE
 
 /*
