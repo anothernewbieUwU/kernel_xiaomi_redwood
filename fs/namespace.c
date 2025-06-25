@@ -44,6 +44,7 @@ extern bool susfs_is_current_zygote_domain(void);
 static DEFINE_IDA(susfs_mnt_id_ida);
 static DEFINE_IDA(susfs_mnt_group_ida);
 
+#define CL_ZYGOTE_COPY_MNT_NS BIT(24) /* used by copy_mnt_ns() */
 #define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */
 #endif
 
@@ -1072,10 +1073,10 @@ bypass_orig_flow:
 	mnt->mnt_mountpoint	= mnt->mnt.mnt_root;
 	mnt->mnt_parent		= mnt;
 
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNTAdd commentMore actions
 	// If caller process is zygote, then it is a normal mount, so we just reorder the mnt_id
 	if (susfs_is_current_zygote_domain()) {
-		+		mnt_ns = current->nsproxy->mnt_ns;
+				mnt_ns = current->nsproxy->mnt_ns;
 		if (mnt_ns) {
 			get_mnt_ns(mnt_ns);
 			rcu_read_lock();
@@ -1092,7 +1093,6 @@ bypass_orig_flow:
 		}
 	}
 #endif
-
 	lock_mount_hash();
 	list_add_tail(&mnt->mnt_instance, &mnt->mnt.mnt_sb->s_mounts);
 	unlock_mount_hash();
