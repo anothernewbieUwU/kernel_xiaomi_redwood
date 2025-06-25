@@ -44,7 +44,6 @@ extern bool susfs_is_current_zygote_domain(void);
 static DEFINE_IDA(susfs_mnt_id_ida);
 static DEFINE_IDA(susfs_mnt_group_ida);
 
-#define CL_ZYGOTE_COPY_MNT_NS BIT(24) /* used by copy_mnt_ns() */
 #define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */
 #endif
 
@@ -1076,8 +1075,21 @@ bypass_orig_flow:
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	// If caller process is zygote, then it is a normal mount, so we just reorder the mnt_id
 	if (susfs_is_current_zygote_domain()) {
-		mnt->mnt.susfs_mnt_id_backup = mnt->mnt_id;
-		mnt->mnt_id = current->susfs_last_fake_mnt_id++;
+		+		mnt_ns = current->nsproxy->mnt_ns;
+		if (mnt_ns) {
+			get_mnt_ns(mnt_ns);
+			rcu_read_lock();
+			mnt_id = list_first_entry(&mnt_ns->list, struct mount, mnt_list)->mnt_id;
+			list_for_each_entry_rcu(m, &mnt_ns->list, mnt_list) {
+				if (m->mnt_id < DEFAULT_SUS_MNT_ID) {
+					mnt_id++;
+				}
+			}
+			WRITE_ONCE(mnt->mnt.susfs_mnt_id_backup, READ_ONCE(mnt->mnt_id));
+			WRITE_ONCE(mnt->mnt_id, READ_ONCE(mnt_id));
+			rcu_read_unlock();
+			put_mnt_ns(mnt_ns);
+		}
 	}
 #endif
 
@@ -1107,6 +1119,12 @@ struct vfsmount *vfs_kern_mount(struct file_system_type *type,
 	struct vfsmount *mnt;
 	int ret = 0;
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	struct mount *m;
+	struct mnt_namespace *mnt_ns;
+	int mnt_id;
+#endif
+	
 	if (!type)
 		return ERR_PTR(-EINVAL);
 
@@ -1152,6 +1170,10 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 	int err;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	struct mount *m;
+	struct mnt_namespace *mnt_ns;
+	int mnt_id;
+
 	bool is_current_ksu_domain = susfs_is_current_ksu_domain();
 	bool is_current_zygote_domain = susfs_is_current_zygote_domain();
 
@@ -1177,18 +1199,8 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 		}
 		goto bypass_orig_flow;
 	}
-	// Secondly, check if it is zygote process and no matter it is doing unshare or not
-	if (likely(is_current_zygote_domain) && (old->mnt_id >= DEFAULT_SUS_MNT_ID)) {
-		/* Important Note: 
-		 *  - Here we can't determine whether the unshare is called zygisk or not,
-		 *    so we can only patch out the unshare code in zygisk source code for now
-		 *  - But at least we can deal with old sus mounts using alloc_vfsmnt()
-		 */
-		mnt = alloc_vfsmnt(old->mnt_devname, true, 0);
-		goto bypass_orig_flow;
-	}
-	// Lastly, for other process that is doing unshare operation, but only deal with old sus mount
-	if ((flag & CL_COPY_MNT_NS) && (old->mnt_id >= DEFAULT_SUS_MNT_ID)) {
+	// Lastly, just check if old->mnt_id is sus
+	if (old->mnt_id >= DEFAULT_SUS_MNT_ID) {
 		mnt = alloc_vfsmnt(old->mnt_devname, true, 0);
 		goto bypass_orig_flow;
 	}
