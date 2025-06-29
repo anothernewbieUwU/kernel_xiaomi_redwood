@@ -1583,7 +1583,6 @@ static const struct arm64_cpu_capabilities arm64_features[] = {
 		 * message to be shown until at least one CPU is detected to
 		 * support the feature.
 		 */
-		.capability = ARM64_HAS_AMU_EXTN,
 		.type = ARM64_CPUCAP_WEAK_LOCAL_CPU_FEATURE,
 		.matches = has_amu,
 		.sys_reg = SYS_ID_AA64PFR0_EL1,
